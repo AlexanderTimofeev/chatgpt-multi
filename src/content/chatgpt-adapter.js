@@ -28,12 +28,21 @@
     return document.querySelector('[data-testid="stop-button"], button[data-testid="stop-streaming-button"], button[aria-label*="Stop"], button[aria-label*="Остановить"]');
   }
   function imageGenerating() {
-    return !!document.querySelector('[data-testid="image-gen-loading-state"], [data-testid^="image-gen-loading"]');
+    return !!document.querySelector('[data-testid="image-gen-loading-state"], [data-testid^="image-gen-loading"], [data-testid*="image-generation"] img[alt*="Loading"]');
+  }
+  // ChatGPT marks the message currently being streamed with `result-streaming`
+  // (older) / a streaming data attribute (newer). This stays present for the
+  // whole assistant turn — including custom-GPT tool calls — which is more
+  // reliable than the stop button, which can blink between tool steps.
+  function streaming() {
+    return !!document.querySelector('.result-streaming, [data-message-streaming="true"]');
+  }
+  function genState() {
+    return { stop: !!stopButton(), image: imageGenerating(), streaming: streaming() };
   }
   function isGenerating() {
-    if (stopButton()) return true;
-    if (imageGenerating()) return true;
-    return false;
+    const g = genState();
+    return g.stop || g.image || g.streaming;
   }
 
   function setText(text) {
@@ -53,6 +62,12 @@
       document.execCommand('insertText', false, text);
     }
     return true;
+  }
+
+  function stop() {
+    const btn = stopButton();
+    if (btn && !btn.disabled) { btn.click(); return true; }
+    return false;
   }
 
   function send() {
@@ -102,7 +117,11 @@
   }
 
   CGPTMP.chatgptAdapter = {
-    convId, composer, sendButton, isGenerating, setText, send, sendPrompt,
+    convId, composer, sendButton, isGenerating, genState, setText, send, sendPrompt, stop,
     getToken, fetchConversation, patchSetting,
   };
+
+  // Console helper for manual debugging of "is it still generating?" — run
+  // window.__cgptmpGen() in a pane's devtools while ChatGPT works.
+  try { window.__cgptmpGen = () => Object.assign({ generating: isGenerating(), convId: convId() }, genState()); } catch {}
 })();

@@ -33,6 +33,7 @@ const state = store.state;
 const BOUND_KEY = 'cgptmp.tg.boundTargets';
 let boundTargets = {}; // paneId -> { chatId, threadId } : mirror this pane to a TG chat/topic
 const boundGen = new Map();
+const tgTypingTimers = new Map();
 const sectionEls = new Map(); // paneId -> <section>
 function saveBound() { chrome.storage.local.set({ [BOUND_KEY]: boundTargets }); }
 
@@ -181,13 +182,16 @@ function render() {
   for (const [id, el] of sectionEls) {
     if (!state.panes.some(p => p.id === id)) { el.remove(); sectionEls.delete(id); }
   }
-  // create/update + place in order (appendChild moves, preserving iframes)
-  for (const pane of state.panes) {
+  // create/update + place in order. Do NOT blindly append existing sections:
+  // moving live iframes can trigger a reload in Chrome. Only insert when the
+  // DOM position is actually wrong (drag reorder / new pane / removed pane).
+  for (const [index, pane] of state.panes.entries()) {
     let el = sectionEls.get(pane.id);
     if (!el) { el = buildSection(pane); sectionEls.set(pane.id, el); }
     else { const h = el.querySelector('.pane-head'); if (h) h.replaceWith(buildPaneHead(pane)); syncSectionBody(el, pane); }
     el.style.flexGrow = String(pane.flex || 1);
-    workspace.appendChild(el); // move into current order
+    const wantedHere = workspace.children[index];
+    if (wantedHere !== el) workspace.insertBefore(el, wantedHere || null);
   }
   renderTabsInto(tabs);
   applyFocusOutline();
@@ -303,23 +307,87 @@ function paneForTarget(chatId, threadId) {
 function tgReply(item, text) {
   chrome.runtime.sendMessage({ type: 'tg-send', text, chatId: item.chatId || undefined, messageThreadId: item.threadId || undefined });
 }
+function tgActionForTarget(target, action = 'typing') {
+  if (!target) return;
+  chrome.runtime.sendMessage({ type: 'tg-chat-action', action, chatId: target.chatId || undefined, messageThreadId: target.threadId || undefined });
+}
+function startTgTyping(paneId) {
+  const target = boundTargets[paneId];
+  if (!target || tgTypingTimers.has(paneId)) return;
+  tgActionForTarget(target, 'typing');
+  tgTypingTimers.set(paneId, setInterval(() => tgActionForTarget(boundTargets[paneId], 'typing'), 4000));
+}
+function stopTgTyping(paneId) {
+  const t = tgTypingTimers.get(paneId);
+  if (t) clearInterval(t);
+  tgTypingTimers.delete(paneId);
+}
+function ensurePaneLoaded(paneId) {
+  if (!store.isLoaded(paneId)) { store.focusPane(paneId); save(); render(); }
+}
+function cmdPane(paneId, cmd, extra = {}, timeout) {
+  ensurePaneLoaded(paneId);
+  return goalController.cmd(paneId, cmd, extra, timeout);
+}
 function handleStatus(paneId, item) {
   const pane = state.panes.find(p => p.id === paneId);
   if (!pane) { tgReply(item, 'Нет привязанного чата.'); return; }
-  store.isLoaded(paneId) || (store.focusPane(paneId), save(), render());
-  goalController.cmd(paneId, 'chatStatus').then((st) => {
+  cmdPane(paneId, 'chatStatus').then((st) => {
     const fmt = (t) => t ? new Date(t * 1000).toLocaleString('ru-RU') : '—';
     const ago = (t) => t ? Math.round((Date.now() / 1000 - t) / 60) + ' мин назад' : '—';
+    const why = [st.stop && 'stop', st.streaming && 'streaming', st.image && 'image'].filter(Boolean).join('+');
     tgReply(item, [
       `📊 ${st.title || pane.title}`,
-      `URL: ${pane.url}`,
-      `Генерирует сейчас: ${st.generating ? 'да ⏳' : 'нет'}`,
+      `🔗 ${pane.url}`,
+      `Генерирует сейчас: ${st.generating ? `да ⏳ (${why || '?'})` : 'нет'}`,
       `Ответ ИИ: ${fmt(st.assistantAt)} (${ago(st.assistantAt)})`,
       `Сообщение юзера: ${fmt(st.userAt)} (${ago(st.userAt)})`,
     ].join('\n'));
-  }).catch(() => tgReply(item, 'Не удалось получить статус (панель спит или грузится).'));
+  }).catch((e) => tgReply(item, 'Не удалось получить статус: ' + String(e.message || e)));
 }
-
+function handleReload(paneId, item) {
+  const pane = state.panes.find(p => p.id === paneId);
+  if (!pane) { tgReply(item, 'Нет привязанного чата.'); return; }
+  ensurePaneLoaded(paneId);
+  reloadPane(paneId);
+  tgReply(item, `↻ Перезагрузил панель: ${pane.title || 'ChatGPT'}`);
+}
+function handleStop(paneId, item) {
+  const pane = state.panes.find(p => p.id === paneId);
+  if (!pane) { tgReply(item, 'Нет привязанного чата.'); return; }
+  cmdPane(paneId, 'stop').then((r) => tgReply(item, r && r.ok ? '⏹ Остановил генерацию.' : '⏹ Сейчас нечего останавливать.'))
+    .catch((e) => tgReply(item, 'Не удалось остановить: ' + String(e.message || e)));
+}
+function handleQueue(paneId, item) {
+  const pane = state.panes.find(p => p.id === paneId);
+  if (!pane) { tgReply(item, 'Нет привязанного чата.'); return; }
+  cmdPane(paneId, 'queueStatus').then((q) => {
+    const items = (q && q.items) || [];
+    const lines = [`📥 Очередь: ${items.length}${q && q.paused ? ' (пауза)' : ''}`];
+    if (q && q.unavailable) lines.push('UI очереди не активен в этой панели.');
+    items.slice(0, 10).forEach((text, i) => lines.push(`${i + 1}. ${String(text).replace(/\s+/g, ' ').slice(0, 180)}`));
+    if (items.length > 10) lines.push(`…ещё ${items.length - 10}`);
+    tgReply(item, lines.join('\n'));
+  }).catch((e) => tgReply(item, 'Не удалось прочитать очередь: ' + String(e.message || e)));
+}
+function handleClearQueue(paneId, item) {
+  const pane = state.panes.find(p => p.id === paneId);
+  if (!pane) { tgReply(item, 'Нет привязанного чата.'); return; }
+  cmdPane(paneId, 'clearQueue').then((r) => tgReply(item, `🧹 Очередь очищена. Удалено: ${(r && r.cleared) || 0}`))
+    .catch((e) => tgReply(item, 'Не удалось очистить очередь: ' + String(e.message || e)));
+}
+function handleScreenshot(paneId, item) {
+  const pane = state.panes.find(p => p.id === paneId);
+  if (!pane) { tgReply(item, 'Нет привязанного чата.'); return; }
+  ensurePaneLoaded(paneId);
+  store.focusPane(paneId); save(); refreshChrome();
+  chrome.runtime.sendMessage({
+    type: 'tg-screenshot',
+    chatId: item.chatId || undefined,
+    messageThreadId: item.threadId || undefined,
+    caption: `📸 ${pane.title || 'ChatGPT'}`,
+  }, (res) => { if (!res || !res.ok) tgReply(item, `Не удалось сделать screenshot: ${res && (res.description || res.error) || 'unknown error'}`); });
+}
 function shortPanePreview(pane) {
   const parts = [pane.title || 'ChatGPT'];
   try {
@@ -339,10 +407,11 @@ function chatsPagePayload(page = 0) {
   const panes = state.panes.filter(p => !p.picker);
   const maxPage = Math.max(0, Math.ceil(panes.length / pageSize) - 1);
   const p = Math.max(0, Math.min(maxPage, Number(page) || 0));
-  const rows = panes.slice(p * pageSize, (p + 1) * pageSize).map((pane, idx) => ([{
+  const rows = [[{ text: '➕ Новый чат', callback_data: 'cgptmp:new' }]];
+  rows.push(...panes.slice(p * pageSize, (p + 1) * pageSize).map((pane, idx) => ([{
     text: `${p * pageSize + idx + 1}. ${(pane.title || 'ChatGPT').slice(0, 32)}`,
     callback_data: `cgptmp:chat:${pane.id}`,
-  }]));
+  }])));
   if (maxPage > 0) {
     const nav = [];
     if (p > 0) nav.push({ text: '◀️', callback_data: `cgptmp:page:${p - 1}` });
@@ -365,6 +434,35 @@ function sendChatsPage(item, page = 0) {
     replyMarkup: payload.replyMarkup,
   });
 }
+function newChatTitle(raw) {
+  const t = String(raw || '').replace(/^\/new(?:@\w+)?\b/i, '').trim();
+  if (t) return t.slice(0, 120);
+  return `ChatGPT ${new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`;
+}
+function createTopicForNewPane(item, rawTitle = '') {
+  const forumChatId = state.settings.tgForumChatId;
+  if (!forumChatId) { tgReply(item, 'В настройках задайте tgForumChatId: группу-форум, где бот админ и может создавать топики.'); return; }
+  const title = newChatTitle(rawTitle);
+  if (item.callbackId) chrome.runtime.sendMessage({ type: 'tg-answer-callback', callbackQueryId: item.callbackId, text: 'Создаю новый чат…' });
+  chrome.runtime.sendMessage({ type: 'tg-create-topic', chatId: forumChatId, name: title }, (res) => {
+    if (!res || !res.ok || !res.result || !res.result.message_thread_id) {
+      tgReply(item, `Не удалось создать топик: ${res && (res.description || res.error) || 'unknown error'}`);
+      return;
+    }
+    const pane = store.addPane('https://chatgpt.com/', false, title);
+    boundTargets[pane.id] = { chatId: forumChatId, threadId: res.result.message_thread_id };
+    save(); saveBound(); render();
+    tgReply({ chatId: forumChatId, threadId: res.result.message_thread_id }, [
+      `✅ Новый чат создан: ${title}`,
+      '',
+      'Напишите сюда сообщение — оно уйдёт в новую ChatGPT-панель.',
+      '/status — статус и ссылка',
+      '/queue — очередь',
+      '/stop — остановить генерацию',
+    ].join('\n'));
+  });
+}
+
 function createTopicForPane(item, paneId) {
   const pane = state.panes.find(p => p.id === paneId);
   if (!pane) { tgReply(item, 'Чат не найден.'); return; }
@@ -384,6 +482,7 @@ function createTopicForPane(item, paneId) {
 }
 function handleCallback(item) {
   const data = item.callbackData || '';
+  if (data === 'cgptmp:new') { createTopicForNewPane(item); return true; }
   const page = data.match(/^cgptmp:page:(\d+)$/);
   if (page) { chrome.runtime.sendMessage({ type: 'tg-answer-callback', callbackQueryId: item.callbackId, text: 'Страница' }); sendChatsPage(item, Number(page[1])); return true; }
   const chat = data.match(/^cgptmp:chat:(.+)$/);
@@ -399,6 +498,11 @@ function handleInbound(items) {
     let paneId = paneForTarget(it.chatId, it.threadId);
     if (!paneId) { const st = goalController.getStatus(); paneId = st.active ? st.executorPaneId : state.focusedId; }
 
+    if (/^\/new(?:@\w+)?(?:\s+(.+))?$/i.test(text)) {
+      const m = text.match(/^\/new(?:@\w+)?(?:\s+(.+))?$/i);
+      createTopicForNewPane(it, m && m[1] ? m[1] : '');
+      continue;
+    }
     if (/^\/chats(?:\s+(\d+))?\b/i.test(text)) {
       const m = text.match(/^\/chats(?:\s+(\d+))?\b/i);
       sendChatsPage(it, m && m[1] ? Number(m[1]) - 1 : 0);
@@ -410,19 +514,25 @@ function handleInbound(items) {
       continue;
     }
     if (/^\/status\b/i.test(text)) { handleStatus(paneId, it); continue; }
+    if (/^\/screenshot\b/i.test(text)) { handleScreenshot(paneId, it); continue; }
+    if (/^\/reload\b/i.test(text)) { handleReload(paneId, it); continue; }
+    if (/^\/stop\b/i.test(text)) { handleStop(paneId, it); continue; }
+    if (/^\/queue\b/i.test(text)) { handleQueue(paneId, it); continue; }
+    if (/^\/clearqueue\b/i.test(text)) { handleClearQueue(paneId, it); continue; }
     if (/^\/id\b/i.test(text)) {
       const paste = it.threadId ? `${it.chatId}/${it.threadId}` : `${it.chatId}`;
       tgReply(it, `Этот чат/топик:\nchat_id: ${it.chatId}\ntopic_id: ${it.threadId || '— (нет топика)'}\n\nВставьте в кнопку 📤 на панели:\n${paste}`);
       continue;
     }
     if (/^\/help\b/i.test(text)) {
-      tgReply(it, 'Команды:\n/chats — список чатов с кнопками и страницами\n/id — chat_id и topic_id этого места (для кнопки 📤)\n/link — ссылка на чат\n/status — состояние чата\nЛюбой другой текст уходит в очередь чата.');
+      tgReply(it, 'Команды:\n/new [название] — создать новый чат и topic\n/chats — список чатов с кнопками и страницами\n/status — состояние + ссылка\n/screenshot — скрин видимой workspace-вкладки\n/reload — перезагрузить текущую панель\n/stop — остановить генерацию\n/queue — показать очередь\n/clearqueue — очистить очередь\n/id — chat_id и topic_id этого места\nЛюбой другой текст уходит в очередь чата.');
       continue;
     }
     if (!state.settings.tgInboundToExecutor) continue;
     if (!paneId) { tgReply(it, 'Не настроена панель для этого топика. В ChatGPT нажмите 📤 на нужной панели.'); continue; }
     if (!store.isLoaded(paneId)) { store.focusPane(paneId); save(); render(); }
-    goalController.cmd(paneId, 'send', { text }).catch(() => tgReply(it, 'Не удалось доставить сообщение в чат.'));
+    startTgTyping(paneId);
+    goalController.cmd(paneId, 'send', { text }).catch(() => { stopTgTyping(paneId); tgReply(it, 'Не удалось доставить сообщение в чат.'); });
   }
 }
 
@@ -462,6 +572,8 @@ window.addEventListener('message', (e) => {
     if (pane && boundTargets[pane.id]) {
       const was = boundGen.get(pane.id);
       boundGen.set(pane.id, d.generating);
+      if (d.generating && state.settings.tgEnabled) startTgTyping(pane.id);
+      if (!d.generating) stopTgTyping(pane.id);
       if (was === true && d.generating === false && state.settings.tgEnabled) {
         const t = boundTargets[pane.id];
         goalController.requestFinalAnswer(pane.id).then((ans) => {

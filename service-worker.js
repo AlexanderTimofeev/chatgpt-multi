@@ -10,6 +10,19 @@ const TG = self.CGPTMP.telegram;
 const TG_POLL_ALARM = 'cgptmp-tg-poll';
 const INBOX_KEY = 'cgptmp.tg.inbox';
 const OFFSET_KEY = 'cgptmp.tg.offset';
+const COMMANDS_KEY = 'cgptmp.tg.commands.token';
+const TG_COMMANDS = [
+  { command: 'new', description: 'Создать новый чат и topic' },
+  { command: 'chats', description: 'Список открытых чатов' },
+  { command: 'status', description: 'Статус текущего чата и ссылка' },
+  { command: 'screenshot', description: 'Скрин текущей workspace-вкладки' },
+  { command: 'reload', description: 'Перезагрузить текущую панель' },
+  { command: 'stop', description: 'Остановить генерацию' },
+  { command: 'queue', description: 'Показать очередь' },
+  { command: 'clearqueue', description: 'Очистить очередь' },
+  { command: 'id', description: 'Показать chat_id/topic_id' },
+  { command: 'help', description: 'Список команд' },
+];
 
 // ---- workspace ----
 async function openWorkspace() {
@@ -51,6 +64,24 @@ async function tgApi(token, method, payload) {
   return r.json();
 }
 
+async function tgSetCommands(token) {
+  if (!token) return { ok: false, error: 'missing token' };
+  return tgApi(token, 'setMyCommands', { commands: TG_COMMANDS });
+}
+
+async function tgEnsureCommands(force = false) {
+  const s = await getSettings();
+  if (!s.tgEnabled || !s.tgBotToken) return { ok: false, error: 'telegram disabled or missing token' };
+  const signature = JSON.stringify({ token: s.tgBotToken.slice(-8), commands: TG_COMMANDS });
+  if (!force) {
+    const saved = await new Promise((r) => chrome.storage.local.get([COMMANDS_KEY], (o) => r(o[COMMANDS_KEY])));
+    if (saved === signature) return { ok: true, skipped: true };
+  }
+  const res = await tgSetCommands(s.tgBotToken);
+  if (res && res.ok) await new Promise((r) => chrome.storage.local.set({ [COMMANDS_KEY]: signature }, r));
+  return res;
+}
+
 async function tgSend(text, opts = {}) {
   const s = await getSettings();
   const token = opts.token || s.tgBotToken;
@@ -66,6 +97,38 @@ async function tgSend(text, opts = {}) {
     if (last && last.ok === false) return last;
   }
   return last || { ok: true };
+}
+
+async function tgChatAction(opts = {}) {
+  const s = await getSettings();
+  const token = opts.token || s.tgBotToken;
+  const chatId = opts.chatId || s.tgUserId;
+  if (!token || !chatId) return { ok: false, error: 'missing token/chatId' };
+  const payload = { chat_id: chatId, action: opts.action || 'typing' };
+  if (opts.messageThreadId) payload.message_thread_id = opts.messageThreadId;
+  return tgApi(token, 'sendChatAction', payload);
+}
+
+async function tgSendPhoto(dataUrl, opts = {}) {
+  const s = await getSettings();
+  const token = opts.token || s.tgBotToken;
+  const chatId = opts.chatId || s.tgUserId;
+  if (!token || !chatId || !dataUrl) return { ok: false, error: 'missing token/chatId/photo' };
+  const blob = await (await fetch(dataUrl)).blob();
+  const form = new FormData();
+  form.append('chat_id', chatId);
+  if (opts.messageThreadId) form.append('message_thread_id', opts.messageThreadId);
+  if (opts.caption) form.append('caption', String(opts.caption).slice(0, 1024));
+  form.append('photo', blob, 'chatgpt-panel.png');
+  const r = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form });
+  return r.json();
+}
+
+async function tgScreenshot(opts = {}) {
+  await openWorkspace();
+  await new Promise((r) => setTimeout(r, 450));
+  const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: 'png' });
+  return tgSendPhoto(dataUrl, opts);
 }
 
 async function tgCreateTopic(name, opts = {}) {
@@ -90,6 +153,7 @@ async function tgPoll() {
   if (!s.tgEnabled || !s.tgBotToken) return;
   polling = true;
   try {
+    tgEnsureCommands().catch((e) => console.warn('[CGPTMP] tg set commands failed', e));
     const offset = await new Promise((r) => chrome.storage.local.get([OFFSET_KEY], (o) => r(o[OFFSET_KEY] || 0)));
     const url = `https://api.telegram.org/bot${s.tgBotToken}/getUpdates?timeout=20${offset ? `&offset=${offset}` : ''}`;
     const data = await (await fetch(url)).json();
@@ -155,8 +219,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     tgCreateTopic(message.name, message).then(sendResponse).catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
   }
+  if (message.type === 'tg-chat-action') {
+    tgChatAction(message).then(sendResponse).catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+  if (message.type === 'tg-screenshot') {
+    tgScreenshot(message).then(sendResponse).catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
   if (message.type === 'tg-answer-callback') {
     tgAnswerCallback(message.callbackQueryId, message.text).then(sendResponse).catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+  if (message.type === 'tg-set-commands') {
+    tgEnsureCommands(true).then(sendResponse).catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
   }
   if (message.type === 'tg-poll-now') {

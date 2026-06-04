@@ -21,7 +21,8 @@
     "unlimitedStorage",
     "sidePanel",
     "alarms",
-    "declarativeNetRequestWithHostAccess"
+    "declarativeNetRequestWithHostAccess",
+    "activeTab"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",

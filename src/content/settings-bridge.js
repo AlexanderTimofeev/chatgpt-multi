@@ -20,6 +20,7 @@
     root.dataset.cgptmpCacheWhole = settings.cacheWholeChat ? 'on' : 'off';
     root.dataset.cgptmpCacheMaxChats = String(settings.cacheMaxChats);
     root.dataset.cgptmpCacheMb = String(settings.cacheMaxMB);
+    root.dataset.cgptmpGenIdleMs = String(settings.genIdleConfirmMs);
   }
 
   // Seed defaults synchronously so the very first conversation fetch is covered

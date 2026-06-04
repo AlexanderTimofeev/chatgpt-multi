@@ -26,6 +26,18 @@
         const ok = await A.sendPrompt(String(msg.text || ''));
         return { ok };
       }
+      case 'stop':
+        return { ok: A.stop ? A.stop() : false };
+      case 'queueStatus': {
+        const q = window.CGPTMP && window.CGPTMP.queueFeature;
+        if (q && q.status) return q.status();
+        return { ok: true, items: [], paused: false, length: 0, unavailable: true };
+      }
+      case 'clearQueue': {
+        const q = window.CGPTMP && window.CGPTMP.queueFeature;
+        if (q && q.clear) return q.clear();
+        return { ok: true, cleared: 0, unavailable: true };
+      }
       case 'getFinalAnswer': {
         try {
           const data = await A.fetchConversation(msg.convId);
@@ -43,7 +55,7 @@
         return { ok: true, results };
       }
       case 'chatStatus': {
-        const out = { generating: A.isGenerating(), convId: A.convId(), title: document.title, url: location.href, userAt: 0, assistantAt: 0 };
+        const out = Object.assign({ generating: A.isGenerating(), convId: A.convId(), title: document.title, url: location.href, userAt: 0, assistantAt: 0 }, A.genState ? A.genState() : {});
         try {
           if (CP && A.convId()) { const data = await A.fetchConversation(); const a = CP.lastActivity(data); out.userAt = a.userAt; out.assistantAt = a.assistantAt; }
         } catch {}
@@ -65,18 +77,27 @@
   });
 
   // Report generation-state changes. To avoid firing on brief streaming gaps
-  // (and the window between the stop button vanishing and image-gen finishing),
-  // a transition to "idle" must hold for two consecutive polls before we emit.
+  // (and the window between the stop button vanishing and image-gen finishing,
+  // or between two tool calls in a custom GPT), a transition to "idle" must hold
+  // for several consecutive polls before we emit. The hold is configurable via
+  // genIdleConfirmMs (mirrored into the <html> dataset by settings-bridge) so
+  // tool-heavy custom GPTs can use a longer, safer threshold.
+  const POLL_MS = 600;
+  function idleConfirmPolls() {
+    const ms = Number(document.documentElement.dataset.cgptmpGenIdleMs) || 1800;
+    return Math.max(2, Math.round(ms / POLL_MS));
+  }
   let reported = null; // last value we told the parent
   let idleStreak = 0;
   setInterval(() => {
     const gen = A.isGenerating();
     if (gen) idleStreak = 0; else idleStreak++;
-    const stable = gen ? true : idleStreak >= 2; // ~1.2s of confirmed idle
+    const stable = gen ? true : idleStreak >= idleConfirmPolls();
     const value = gen ? true : (stable ? false : reported);
     if (value !== reported && value !== null) {
       reported = value;
-      try { window.parent.postMessage({ type: 'cgptmp:gen', generating: value, convId: A.convId() }, '*'); } catch {}
+      const detail = A.genState ? A.genState() : {};
+      try { window.parent.postMessage(Object.assign({ type: 'cgptmp:gen', generating: value, convId: A.convId() }, detail), '*'); } catch {}
     }
-  }, 600);
+  }, POLL_MS);
 })();

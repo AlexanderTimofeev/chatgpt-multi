@@ -75,6 +75,20 @@
       throw new Error('панель не отвечает (возможно 504 — попробуйте ▶ ещё раз)');
     }
 
+    // Countdown before an auto-send so the user can pause and intervene. Returns
+    // false if the user paused mid-countdown (the send should be deferred).
+    async function countdownBeforeSend(action) {
+      const sec = Math.max(0, Number(ctx.getSettings().goalCountdownSec) || 0);
+      if (sec <= 0) return true;
+      const who = action.type === 'sendToExecutor' ? 'исполнителю' : 'агенту';
+      for (let n = sec; n > 0; n--) {
+        if (paused) return false;
+        ctx.notify(`⏳ Через ${n}… отправлю ${who} (⏸ — вмешаться)`);
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      return !paused;
+    }
+
     // ---- perform a loop action ----
     async function dispatch(action) {
       if (!action || action.type === 'noop' || action.type === 'wait') { persist(); return; }
@@ -83,6 +97,15 @@
       if (paused && (action.type === 'sendToExecutor' || action.type === 'sendToAgent')) {
         pendingAction = action; persist(); changed();
         ctx.notify('⏸ На паузе — следующий шаг отложен'); return;
+      }
+
+      // Visible countdown before an auto-send; pausing during it defers the send.
+      if (action.type === 'sendToExecutor' || action.type === 'sendToAgent') {
+        const go = await countdownBeforeSend(action);
+        if (!go) {
+          pendingAction = action; persist(); changed();
+          ctx.notify('⏸ Отложено — нажмите ▶ чтобы отправить'); return;
+        }
       }
 
       try {
@@ -169,11 +192,20 @@
       }
     }
 
+    // Chars of agent-chat history that trigger a full instruction re-inject.
+    // ≈4 chars/token, configured as a % of the model's context window.
+    function reinjectChars(s) {
+      const tokens = Number(s.goalContextTokens) || 128000;
+      const pct = Math.max(1, Math.min(100, Number(s.goalReinjectPercent) || 25));
+      return Math.max(2000, Math.round(tokens * 4 * pct / 100));
+    }
+
     function buildSession(goal, marker, initialState) {
       const s = ctx.getSettings();
       return GL.createGoalSession({
         goal, marker,
         maxIterations: s.goalMaxIterations,
+        reinjectChars: reinjectChars(s),
         buildEvaluatorPrompt: GA.buildEvaluatorPrompt,
         detectGoalMarker: GA.detectGoalMarker,
         formatReport: TG.formatFinalReport,

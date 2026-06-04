@@ -88,6 +88,8 @@
       const pauseBtn = panel.querySelector('[data-act="pause"]');
       const titleEl = panel.querySelector('.cgptmp-q-title');
 
+      function queueSnapshot() { return { ok: true, items: queue.items, paused, length: queue.length }; }
+
       function renderList() {
         listEl.replaceChildren();
         queue.items.forEach((text, i) => {
@@ -165,6 +167,10 @@
       document.addEventListener('keydown', interceptComposerEnter, true);
       panel.querySelector('[data-act="pause"]').addEventListener('click', () => { paused = !paused; persist(); renderList(); maybeSend(); });
       panel.querySelector('[data-act="clear"]').addEventListener('click', () => { queue.clear(); persist(); renderList(); });
+      window.CGPTMP.queueFeature = {
+        status: queueSnapshot,
+        clear() { const n = queue.length; queue.clear(); persist(); renderList(); return { ok: true, cleared: n }; },
+      };
 
       // ---- send loop ----
       function maybeSend() {
@@ -196,6 +202,7 @@
         dispose() {
           clearInterval(pollId);
           document.removeEventListener('keydown', interceptComposerEnter, true);
+          if (window.CGPTMP.queueFeature && window.CGPTMP.queueFeature.status === queueSnapshot) delete window.CGPTMP.queueFeature;
           panel.remove();
         },
       };
