@@ -42,7 +42,9 @@
 
     function persist() {
       if (!session || !cfg) { chrome.storage.local.remove(SESSION_KEY); return; }
-      chrome.storage.local.set({ [SESSION_KEY]: { cfg, state: session.snapshot(), paused } });
+      // pendingAction is persisted too: if the page reloads while a send was
+      // deferred (paused / after an error), ▶ can re-dispatch it after restore.
+      chrome.storage.local.set({ [SESSION_KEY]: { cfg, state: session.snapshot(), paused, pendingAction } });
     }
 
     // ---- command/reply transport ----
@@ -149,6 +151,35 @@
       persist(); changed();
     }
 
+    // Re-sync the loop with reality. The loop is event-driven (it advances on a
+    // pane's generating true->false transition), but after a full page reload the
+    // `gen` map is empty and the awaited pane is already idle, so that transition
+    // never fires and the session looks frozen. kick() actively checks the pane
+    // the current phase is waiting on and either advances the loop (idle) or arms
+    // the normal transition (still generating). Called from resume().
+    async function kick() {
+      if (!session || !cfg || paused) return;
+      const phase = session.state.phase;
+      const paneId = phase === 'awaitingExecutor' ? cfg.executorPaneId
+        : phase === 'awaitingAgent' ? cfg.agentPaneId : null;
+      if (!paneId) return;
+      ctx.ensureLoaded(paneId);
+      let st = null;
+      try { st = await sendCmd(paneId, 'status', {}, 5000); } catch {}
+      try {
+        if (!st) { await waitPaneReady(paneId); st = { generating: false }; }
+        if (st.generating) {
+          gen.set(paneId, true); // arm the normal idle transition
+          ctx.notify('⏳ Панель ещё отвечает — продолжу по завершении хода');
+        } else {
+          gen.set(paneId, false);
+          await onPaneTurnEnded(paneId);
+        }
+      } catch (e) {
+        error('не удалось возобновить после перезагрузки: ' + String(e && e.message ? e.message : e));
+      }
+    }
+
     async function onPaneTurnEnded(paneId) {
       if (!session || !cfg) return;
       if (paneId === cfg.executorPaneId && session.state.phase === 'awaitingExecutor') {
@@ -230,7 +261,10 @@
     function resume() {
       if (!session) return;
       paused = false; persist(); changed(); ctx.notify('▶ Продолжаю');
+      // Re-dispatch a deferred send if there is one; otherwise re-sync with the
+      // awaited pane (covers continuing after a page reload).
       if (pendingAction) { const a = pendingAction; pendingAction = null; dispatch(a); }
+      else kick();
     }
     function stop() {
       if (session) dispatch(session.abort('manual'));
@@ -245,6 +279,7 @@
         if (ph === 'done' || ph === 'aborted' || ph === 'new') { chrome.storage.local.remove(SESSION_KEY); return; }
         cfg = saved.cfg;
         session = buildSession(cfg.goal, cfg.marker, saved.state);
+        pendingAction = saved.pendingAction || null;
         paused = true; // restored sessions start paused so the user is in control
         ctx.notify('ℹ️ Goal-сессия восстановлена и на паузе. ▶ чтобы продолжить.');
         changed();

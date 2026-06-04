@@ -121,7 +121,9 @@
     getToken, fetchConversation, patchSetting,
   };
 
-  // Console helper for manual debugging of "is it still generating?" — run
-  // window.__cgptmpGen() in a pane's devtools while ChatGPT works.
+  // Console helper for manual debugging of "is it still generating?". This runs
+  // in the extension's ISOLATED content-script world, so in DevTools switch the
+  // console's context dropdown from "top" to this content script before calling
+  // __cgptmpGen() — it is not on the page's own window.
   try { window.__cgptmpGen = () => Object.assign({ generating: isGenerating(), convId: convId() }, genState()); } catch {}
 })();
