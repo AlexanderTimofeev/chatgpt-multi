@@ -98,6 +98,34 @@ test('manual abort stops the loop; further events no-op', () => {
   assert.equal(s.onExecutorIdle('x').type, 'noop');
 });
 
+test('first agent send is full; later sends go compact to save tokens', () => {
+  const calls = [];
+  const s = make({
+    reinjectChars: 1e9, // effectively never re-inject after the first
+    buildEvaluatorPrompt: (g, a, m, opts) => { calls.push(!!(opts && opts.full)); return `P:${a}`; },
+  });
+  s.start();
+  s.onExecutorIdle('v1'); // -> agent (full)
+  s.onAgentIdle('missing a'); // -> executor
+  s.onExecutorIdle('v2'); // -> agent (compact)
+  assert.deepEqual(calls, [true, false]);
+});
+
+test('re-injects a full prompt once history grows past the threshold', () => {
+  const calls = [];
+  const big = 'x'.repeat(500);
+  const s = make({
+    maxIterations: 10,
+    reinjectChars: 300, // small threshold so the next round re-injects
+    buildEvaluatorPrompt: (g, a, m, opts) => { calls.push(!!(opts && opts.full)); return big; },
+  });
+  s.start();
+  s.onExecutorIdle('v1'); // full (sends `big`, 500 chars > 300)
+  s.onAgentIdle('missing'); // executor
+  s.onExecutorIdle('v2'); // grown > threshold -> full again
+  assert.deepEqual(calls, [true, true]);
+});
+
 test('marker detection ignores the marker when only quoted in prose', () => {
   const s = make();
   s.start();

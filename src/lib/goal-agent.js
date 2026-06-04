@@ -80,22 +80,45 @@
   }
 
   /**
-   * Build the evaluator prompt. Worded to keep the agent strict and prevent it
-   * from inventing extra requirements or endless "could also improve" edits.
+   * Build the evaluator prompt.
+   *
+   * The agent acts as a strict acceptor AND a mentor: every turn it picks one of
+   * three modes — (1) DONE → emit the exact marker; (2) DIRECT → say what's
+   * missing and the concrete next step; (3) never invent requirements beyond the
+   * goal. Worded to prevent endless "could also improve" edits.
+   *
+   * To save tokens we don't repeat the whole instruction+goal each round: the
+   * agent chat is persistent, so after the first (full) prompt we send a
+   * `full:false` compact prompt that carries only the new executor answer and
+   * relies on the earlier instruction/goal still in conversation history. The
+   * controller re-injects a full prompt periodically (see goal-loop).
    */
-  function buildEvaluatorPrompt(goal, executorAnswer, marker = GOAL_MARKER) {
+  function buildEvaluatorPrompt(goal, executorAnswer, marker = GOAL_MARKER, opts = {}) {
+    const full = opts.full !== false;
+    const answer = String(executorAnswer || '').trim();
+    if (!full) {
+      return [
+        'Новый ответ исполнителя — оцени по той же ЦЕЛИ и правилам, что и выше:',
+        '',
+        answer,
+        '',
+        `Если цель полностью достигнута — ответь РОВНО одной строкой: ${marker}`,
+        'Иначе кратко: чего не хватает и что конкретно сделать дальше (прямое указание/совет), без воды.',
+      ].join('\n');
+    }
     return [
-      'Ты — строгий приёмщик результата. Твоя единственная задача — проверить, достигнута ли ЗАЯВЛЕННАЯ цель.',
-      'Правила: не предлагай улучшений сверх цели, не изобретай новых требований, не переписывай работу, не добавляй «было бы неплохо». Оценивай строго по факту.',
+      'Ты — строгий приёмщик результата и наставник исполнителя. На каждом ходу выбери ОДИН режим ответа:',
+      `1) ГОТОВО — если цель полностью достигнута, ответь РОВНО одной строкой, без кавычек и любого другого текста: ${marker}`,
+      '2) УКАЗАНИЕ — если цель ещё не достигнута, кратко скажи, чего конкретно не хватает и что сделать дальше (можно дать прямое указание/совет, как продвинуться к цели).',
+      'Правила: не предлагай улучшений сверх цели, не изобретай новых требований, не переписывай уже готовое, не добавляй «было бы неплохо». Оценивай строго по факту.',
       '',
       'ЦЕЛЬ:',
       String(goal || '').trim(),
       '',
       'ФИНАЛЬНЫЙ ОТВЕТ ИСПОЛНИТЕЛЯ:',
-      String(executorAnswer || '').trim(),
+      answer,
       '',
-      `Если цель полностью достигнута — ответь РОВНО одной строкой, без кавычек и любого другого текста: ${marker}`,
-      'Иначе кратко перечисли ТОЛЬКО то, чего конкретно не хватает для достижения цели. Каждый пункт — реально блокирующий недостаток, без украшательств и без предложений по улучшению.',
+      `Помни: при достижении цели — только строка ${marker}. Иначе — только реально блокирующие пункты и следующий шаг.`,
     ].join('\n');
   }
 

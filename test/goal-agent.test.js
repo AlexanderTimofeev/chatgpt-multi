@@ -62,6 +62,21 @@ test('buildEvaluatorPrompt embeds goal + answer and the marker instruction', () 
   assert.ok(/не изобретай новых требований/i.test(p));
 });
 
+test('full evaluator prompt offers the three modes (done / direct)', () => {
+  const p = GA.buildEvaluatorPrompt('Goal', 'Answer', GA.GOAL_MARKER, { full: true });
+  assert.ok(/ГОТОВО/.test(p));
+  assert.ok(/УКАЗАНИЕ/.test(p));
+});
+
+test('compact evaluator prompt omits the goal but keeps answer + marker', () => {
+  const full = GA.buildEvaluatorPrompt('Build a todo app', 'New work', GA.GOAL_MARKER, { full: true });
+  const compact = GA.buildEvaluatorPrompt('Build a todo app', 'New work', GA.GOAL_MARKER, { full: false });
+  assert.ok(!compact.includes('Build a todo app')); // goal lives in chat history, not repeated
+  assert.ok(compact.includes('New work'));
+  assert.ok(compact.includes(GA.GOAL_MARKER));
+  assert.ok(compact.length < full.length);
+});
+
 test('MEMORY_DISABLE_FEATURES is the documented set', () => {
   assert.deepEqual(GA.MEMORY_DISABLE_FEATURES, ['hive_referenced_in_internal_knowledge', 'sunshine']);
 });

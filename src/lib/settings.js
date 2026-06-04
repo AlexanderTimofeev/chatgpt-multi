@@ -40,6 +40,21 @@
     goalMarker: 'GOAL REACHED GOAL',
     goalMaxIterations: 25, // safety cap on agent->executor rounds
     goalDisableMemory: true, // PATCH account settings to disable memory for the agent
+    // Token saving: instead of repeating the full instruction+goal to the agent
+    // every round, send a compact prompt and only re-inject the full instruction
+    // once the agent chat's history grows past goalReinjectPercent of the model's
+    // context window. (We can't read the model from the web UI, so the context
+    // size is configured here.)
+    goalContextTokens: 128000, // chosen model's context window in tokens
+    goalReinjectPercent: 25, // re-send full instruction when history reaches this % of the window
+    // Agent mode: countdown (seconds) shown before each auto-send so you can
+    // pause and intervene. 0 = send immediately.
+    goalCountdownSec: 3,
+
+    // Generation detection: how long a pane must look idle before we treat the
+    // turn as finished. Higher = safer for tool-heavy custom GPTs (bridges gaps
+    // between tool calls) at the cost of a small delay.
+    genIdleConfirmMs: 1800,
 
     // Telegram bridge
     tgEnabled: false,
