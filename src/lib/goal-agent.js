@@ -71,6 +71,40 @@
     return '';
   }
 
+  /**
+   * Latest assistant final answer on the active branch, with completion info.
+   * The DOM stop button can blink off mid-turn (verified live), so the goal loop
+   * uses this to confirm a turn really finished: ChatGPT marks a finished message
+   * with status "finished_successfully" / end_turn true / metadata.is_complete,
+   * and create_time lets the caller check the answer is newer than the prompt it
+   * sent (the REST API lags during streaming and returns the previous turn).
+   * @returns {{text:string, createTime:number, complete:boolean}}
+   */
+  function answerInfo(data) {
+    const out = { text: '', createTime: 0, complete: false };
+    if (!data || !data.mapping || !data.current_node) return out;
+    const mapping = data.mapping;
+    const seen = new Set();
+    let id = data.current_node;
+    while (id && mapping[id] && !seen.has(id)) {
+      seen.add(id);
+      const node = mapping[id];
+      if (isFinalAnswer(node)) {
+        const t = messageText(node);
+        if (t) {
+          const m = node.message;
+          const meta = m.metadata || {};
+          out.text = t;
+          out.createTime = m.create_time || 0;
+          out.complete = m.status === 'finished_successfully' || m.end_turn === true || meta.is_complete === true;
+          return out;
+        }
+      }
+      id = node.parent;
+    }
+    return out;
+  }
+
   /** True when the agent declared the goal reached (marker on its own line). */
   function detectGoalMarker(text, marker = GOAL_MARKER) {
     if (!text) return false;
@@ -128,6 +162,7 @@
     messageText,
     isFinalAnswer,
     extractFinalAnswer,
+    answerInfo,
     detectGoalMarker,
     buildEvaluatorPrompt,
   };

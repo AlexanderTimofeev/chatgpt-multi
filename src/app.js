@@ -335,7 +335,7 @@ function handleStatus(paneId, item) {
   cmdPane(paneId, 'chatStatus').then((st) => {
     const fmt = (t) => t ? new Date(t * 1000).toLocaleString('ru-RU') : '—';
     const ago = (t) => t ? Math.round((Date.now() / 1000 - t) / 60) + ' мин назад' : '—';
-    const why = [st.stop && 'stop', st.streaming && 'streaming', st.image && 'image'].filter(Boolean).join('+');
+    const why = [st.stop && 'stop', st.image && 'image'].filter(Boolean).join('+');
     tgReply(item, [
       `📊 ${st.title || pane.title}`,
       `🔗 ${pane.url}`,

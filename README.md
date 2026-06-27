@@ -3,6 +3,9 @@
 Multi-pane ChatGPT workspace as a Chrome extension: several ChatGPT chats side
 by side in one extension page, with bottom tabs and a chat-picker pane.
 
+![ChatGPT Multi Pane workspace](assets/screenshot.png)
+
+
 ## Architecture (hybrid, performance-first)
 
 Each pane is a live `https://chatgpt.com` iframe, so all of ChatGPT keeps

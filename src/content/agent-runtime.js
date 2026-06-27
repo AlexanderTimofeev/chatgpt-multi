@@ -41,7 +41,8 @@
       case 'getFinalAnswer': {
         try {
           const data = await A.fetchConversation(msg.convId);
-          return { ok: true, finalAnswer: GA.extractFinalAnswer(data), convId: A.convId() };
+          const info = GA.answerInfo ? GA.answerInfo(data) : { text: GA.extractFinalAnswer(data), createTime: 0, complete: true };
+          return { ok: true, finalAnswer: info.text, createTime: info.createTime, complete: info.complete, convId: A.convId() };
         } catch (e) {
           return { ok: false, error: String(e) };
         }

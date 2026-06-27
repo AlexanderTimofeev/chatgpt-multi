@@ -28,21 +28,21 @@
     return document.querySelector('[data-testid="stop-button"], button[data-testid="stop-streaming-button"], button[aria-label*="Stop"], button[aria-label*="Остановить"]');
   }
   function imageGenerating() {
-    return !!document.querySelector('[data-testid="image-gen-loading-state"], [data-testid^="image-gen-loading"], [data-testid*="image-generation"] img[alt*="Loading"]');
-  }
-  // ChatGPT marks the message currently being streamed with `result-streaming`
-  // (older) / a streaming data attribute (newer). This stays present for the
-  // whole assistant turn — including custom-GPT tool calls — which is more
-  // reliable than the stop button, which can blink between tool steps.
-  function streaming() {
-    return !!document.querySelector('.result-streaming, [data-message-streaming="true"]');
+    // Older builds exposed a dedicated loading testid; current builds don't, so
+    // keep it as a best-effort fallback. The reliable signal is stopButton().
+    return !!document.querySelector('[data-testid="image-gen-loading-state"], [data-testid^="image-gen-loading"]');
   }
   function genState() {
-    return { stop: !!stopButton(), image: imageGenerating(), streaming: streaming() };
+    return { stop: !!stopButton(), image: imageGenerating() };
   }
+  // Real-time "is a turn running" signal. Verified live (2026): only the stop
+  // button is reliable across text + image generation; `.result-streaming` and
+  // `[data-stream-active]` are dead/stale on the current build, so we don't use
+  // them. The goal loop additionally confirms completion via the conversation
+  // API (see goal-agent.answerInfo) because the stop button can blink.
   function isGenerating() {
     const g = genState();
-    return g.stop || g.image || g.streaming;
+    return g.stop || g.image;
   }
 
   function setText(text) {

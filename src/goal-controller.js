@@ -25,6 +25,7 @@
     let pendingAction = null; // deferred send action while paused / after error
     const gen = new Map();
     const pending = new Map();
+    const sentAt = new Map(); // paneId -> epoch seconds we last sent a prompt to it
     let reqSeq = 0;
 
     function changed() { if (ctx.onStatusChange) ctx.onStatusChange(getStatus()); }
@@ -116,6 +117,7 @@
           await waitPaneReady(cfg.executorPaneId);
           const r = await sendCmd(cfg.executorPaneId, 'send', { text: action.text });
           if (!r || !r.ok) throw new Error('не удалось отправить исполнителю');
+          sentAt.set(cfg.executorPaneId, Date.now() / 1000);
         } else if (action.type === 'sendToAgent') {
           ctx.ensureLoaded(cfg.agentPaneId);
           // One persistent agent chat for the whole session: it keeps context of
@@ -133,6 +135,7 @@
           }
           const r = await sendCmd(cfg.agentPaneId, 'send', { text: action.text });
           if (!r || !r.ok) throw new Error('не удалось отправить агенту');
+          sentAt.set(cfg.agentPaneId, Date.now() / 1000);
         } else if (action.type === 'finish') {
           tg(action.report);
           ctx.notify('🎯 Цель достигнута');
@@ -180,18 +183,41 @@
       }
     }
 
+    // Read a pane's final answer, but only accept it once the conversation API
+    // confirms the turn is COMPLETE and NEWER than the prompt we sent. Verified
+    // live: the DOM stop button can blink off mid-turn, and the REST API lags
+    // during streaming (returns the previous turn), so a naive read can grab a
+    // stale/partial answer. Retries briefly to let persistence catch up, then
+    // falls back to whatever text we have.
+    async function readSettledAnswer(paneId) {
+      const since = sentAt.get(paneId) || 0;
+      let last = '';
+      for (let i = 0; i < 6; i++) {
+        let r = null;
+        try { r = await sendCmd(paneId, 'getFinalAnswer'); } catch {}
+        if (r && r.finalAnswer) {
+          last = r.finalAnswer;
+          const complete = r.complete !== false;
+          const fresh = !since || !r.createTime || r.createTime >= since - 2;
+          if (complete && fresh) return r.finalAnswer;
+        }
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+      return last; // best effort after retries
+    }
+
     async function onPaneTurnEnded(paneId) {
       if (!session || !cfg) return;
       if (paneId === cfg.executorPaneId && session.state.phase === 'awaitingExecutor') {
         let answer = '';
-        try { const r = await sendCmd(paneId, 'getFinalAnswer'); answer = (r && r.finalAnswer) || ''; }
+        try { answer = await readSettledAnswer(paneId); }
         catch (e) { error('не смог прочитать ответ исполнителя'); }
         const s = ctx.getSettings();
         if (answer && s.tgEnabled && s.tgForwardExecutor) tg(answer);
         await dispatch(session.onExecutorIdle(answer));
       } else if (paneId === cfg.agentPaneId && session.state.phase === 'awaitingAgent') {
         let answer = '';
-        try { const r = await sendCmd(paneId, 'getFinalAnswer'); answer = (r && r.finalAnswer) || ''; }
+        try { answer = await readSettledAnswer(paneId); }
         catch (e) { error('не смог прочитать ответ агента'); }
         const s = ctx.getSettings();
         if (answer && s.tgEnabled && s.tgForwardAgent && s.tgSendAgentOpinion) tg('🧭 Агент: ' + answer);
