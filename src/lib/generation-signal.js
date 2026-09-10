@@ -16,5 +16,13 @@
     };
   }
 
-  return { makeGenerationSignal };
+  function domGenerationAttributes(generating, convId, seq) {
+    return {
+      state: generating ? 'generating' : 'idle',
+      convId: convId ?? '',
+      seq: String(seq)
+    };
+  }
+
+  return { makeGenerationSignal, domGenerationAttributes };
 });
