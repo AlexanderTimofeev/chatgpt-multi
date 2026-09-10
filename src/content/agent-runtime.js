@@ -91,6 +91,18 @@
   }
   let reported = null; // last value we told the parent
   let idleStreak = 0;
+  let domSignalSeq = 0;
+
+  function publishSharedDomState(generating, convId) {
+    const root = document.documentElement;
+    if (!root || typeof GS.domGenerationAttributes !== 'function') return;
+    const attrs = GS.domGenerationAttributes(generating, convId, ++domSignalSeq);
+    root.setAttribute('data-cgptmp-generation-state', attrs.state);
+    root.setAttribute('data-cgptmp-generation-conv-id', attrs.convId);
+    // Sequence is written last so observers only react to a complete snapshot.
+    root.setAttribute('data-cgptmp-generation-seq', attrs.seq);
+  }
+
   setInterval(() => {
     const gen = A.isGenerating();
     if (gen) idleStreak = 0; else idleStreak++;
@@ -98,12 +110,14 @@
     const value = gen ? true : (stable ? false : reported);
     if (value !== reported && value !== null) {
       reported = value;
+      const convId = A.convId();
       const detail = A.genState ? A.genState() : {};
-      const signal = GS.makeGenerationSignal(value, A.convId(), detail);
+      const signal = GS.makeGenerationSignal(value, convId, detail);
+      publishSharedDomState(value, convId);
       try { window.parent.postMessage(signal, '*'); } catch {}
-      // Also publish the same verified state in this iframe. Other extensions
-      // running in their own isolated worlds can consume it without knowing
-      // ChatGPT Multi's extension id.
+      // Keep postMessage as a compatibility fallback. The shared-DOM snapshot
+      // above is the primary cross-extension channel because all isolated worlds
+      // in the frame observe the same DOM.
       try { window.postMessage(signal, '*'); } catch {}
     }
   }, POLL_MS);
