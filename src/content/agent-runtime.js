@@ -12,7 +12,8 @@
   const A = window.CGPTMP && window.CGPTMP.chatgptAdapter;
   const GA = window.CGPTMP && window.CGPTMP.goalAgent;
   const CP = window.CGPTMP && window.CGPTMP.chatPreview;
-  if (!A || !GA) { console.warn('[CGPTMP] agent-runtime: deps missing'); return; }
+  const GS = window.CGPTMP && window.CGPTMP.generationSignal;
+  if (!A || !GA || !GS) { console.warn('[CGPTMP] agent-runtime: deps missing'); return; }
 
   function reply(requestId, payload) {
     try { window.parent.postMessage(Object.assign({ type: 'cgptmp:reply', requestId }, payload), '*'); } catch {}
@@ -98,7 +99,12 @@
     if (value !== reported && value !== null) {
       reported = value;
       const detail = A.genState ? A.genState() : {};
-      try { window.parent.postMessage(Object.assign({ type: 'cgptmp:gen', generating: value, convId: A.convId() }, detail), '*'); } catch {}
+      const signal = GS.makeGenerationSignal(value, A.convId(), detail);
+      try { window.parent.postMessage(signal, '*'); } catch {}
+      // Also publish the same verified state in this iframe. Other extensions
+      // running in their own isolated worlds can consume it without knowing
+      // ChatGPT Multi's extension id.
+      try { window.postMessage(signal, '*'); } catch {}
     }
   }, POLL_MS);
 })();
