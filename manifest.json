@@ -93,6 +93,7 @@
         "src/content/features/auto-confirm.js",
         "src/content/features/queue.js",
         "src/content/features/collapse.js",
+        "src/lib/generation-signal.js",
         "src/content/agent-runtime.js",
         "src/content/features-bundle.js",
         "src/content/auto-scroll-inactive.js"
