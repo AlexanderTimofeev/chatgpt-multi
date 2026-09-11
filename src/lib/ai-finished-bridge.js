@@ -9,6 +9,21 @@
     const id = String(value || '').trim().toLowerCase();
     return /^[a-p]{32}$/.test(id) ? id : '';
   }
+  function normalizeFocusRequest(message, senderId, configuredAiFinishedId) {
+    if (!message || message.type !== 'ai-finished:multi-focus-pane' || message.protocolVersion !== PROTOCOL_VERSION) return null;
+    const sender = normalizeExtensionId(senderId);
+    const configured = normalizeExtensionId(configuredAiFinishedId);
+    if (!sender || !configured || sender !== configured) return null;
+    const paneId = String(message.paneId || '').trim();
+    if (!paneId || paneId.length > 128) return null;
+    return { paneId };
+  }
+  function focusWorkspaceSnapshot(snapshot, paneId) {
+    const id = String(paneId || '').trim();
+    if (!snapshot || !Array.isArray(snapshot.panes) || !id) return null;
+    if (!snapshot.panes.some((pane) => pane && pane.id === id)) return null;
+    return { ...snapshot, focusedId: id };
+  }
   function createBridge({ sendExternal, getExtensionId }) {
     const paneStates = new Map();
     async function send(message) {
@@ -49,5 +64,11 @@
     function clearPane(paneId) { paneStates.delete(String(paneId || '')); }
     return { pair, observePaneGeneration, clearPane };
   }
-  return { PROTOCOL_VERSION, normalizeExtensionId, createBridge };
+  return {
+    PROTOCOL_VERSION,
+    normalizeExtensionId,
+    normalizeFocusRequest,
+    focusWorkspaceSnapshot,
+    createBridge
+  };
 });
