@@ -56,7 +56,8 @@
     {
       title: 'AI Finished',
       items: [
-        { key: 'aiFinishedExtensionId', type: 'text', name: 'AI Finished extension ID', desc: 'Скопируйте ID расширения AI Finished из chrome://extensions. После сохранения GPT-Multi выполнит привязку.' },
+        { key: 'aiFinishedExtensionId', type: 'text', name: 'AI Finished extension ID', desc: 'Скопируйте ID расширения AI Finished из chrome://extensions.' },
+        { type: 'aiFinishedPair', name: 'Pair / test connection', desc: 'Сохраните ID выше и сразу проверьте соединение с AI Finished.' },
       ],
     },
     {
@@ -169,6 +170,20 @@
       input.value = settings[item.key] || '';
       input.addEventListener('change', () => { settings[item.key] = input.value.trim(); persist(); if (item.key === 'aiFinishedExtensionId' && settings[item.key]) pairAiFinished(); });
       row.appendChild(input);
+    } else if (item.type === 'aiFinishedPair') {
+      const controls = document.createElement('div');
+      controls.className = 'pair-controls';
+      const button = document.createElement('button');
+      button.id = 'pairAiFinished';
+      button.className = 'text-input';
+      button.type = 'button';
+      button.textContent = 'Pair';
+      button.addEventListener('click', () => pairAiFinished());
+      const status = document.createElement('div');
+      status.id = 'aiFinishedStatus';
+      status.className = 'saved';
+      controls.append(button, status);
+      row.appendChild(controls);
     } else if (item.type === 'select') {
       const sel = document.createElement('select');
       sel.className = 'text-input';
@@ -196,7 +211,6 @@
     return row;
   }
 
-  document.getElementById('pairAiFinished')?.addEventListener('click', () => pairAiFinished());
 
   chrome.storage.local.get([S.STORAGE_KEY], (res) => {
     settings = S.withDefaults(res && res[S.STORAGE_KEY]);
