@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 let api = null;
 try { api = require('../src/lib/ai-finished-bridge.js'); } catch {}
 const VALID_ID = 'abcdefghijklmnopabcdefghijklmnop';
+const OTHER_ID = 'ponmlkjihgfedcbaponmlkjihgfedcba';
 
 test('normalizes only valid Chrome extension ids', () => {
   assert.ok(api);
@@ -45,4 +46,22 @@ test('invalid receiver or send failure is non-fatal', async () => {
   const result = await failing.observePaneGeneration({ paneId: 'a', generating: true });
   assert.equal(result.sent, false);
   assert.match(result.error, /no receiver/);
+});
+
+test('focus command is trusted only from configured AI Finished id', () => {
+  assert.equal(typeof api.normalizeFocusRequest, 'function');
+  assert.deepEqual(
+    api.normalizeFocusRequest({ type: 'ai-finished:multi-focus-pane', protocolVersion: 1, paneId: 'pane-1' }, VALID_ID, VALID_ID),
+    { paneId: 'pane-1' }
+  );
+  assert.equal(api.normalizeFocusRequest({ type: 'ai-finished:multi-focus-pane', protocolVersion: 1, paneId: 'pane-1' }, OTHER_ID, VALID_ID), null);
+  assert.equal(api.normalizeFocusRequest({ type: 'ai-finished:multi-focus-pane', protocolVersion: 2, paneId: 'pane-1' }, VALID_ID, VALID_ID), null);
+});
+
+test('workspace snapshot can be focused on an existing pane only', () => {
+  assert.equal(typeof api.focusWorkspaceSnapshot, 'function');
+  const snapshot = { focusedId: 'a', panes: [{ id: 'a' }, { id: 'b' }] };
+  assert.deepEqual(api.focusWorkspaceSnapshot(snapshot, 'b'), { focusedId: 'b', panes: [{ id: 'a' }, { id: 'b' }] });
+  assert.equal(api.focusWorkspaceSnapshot(snapshot, 'missing'), null);
+  assert.equal(snapshot.focusedId, 'a');
 });
