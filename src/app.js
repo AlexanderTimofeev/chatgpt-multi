@@ -30,6 +30,11 @@ function isChatUrl(url) { try { return CHAT_PATH_RE.test(new URL(url).pathname);
 
 const store = createPaneStore({ inferTitle });
 const state = store.state;
+const AI_FINISHED = (window.CGPTMP && window.CGPTMP.aiFinishedBridge) || null;
+const aiFinishedBridge = AI_FINISHED ? AI_FINISHED.createBridge({
+  getExtensionId: () => state.settings && state.settings.aiFinishedExtensionId,
+  sendExternal: (id, message) => chrome.runtime.sendMessage(id, message)
+}) : null;
 const BOUND_KEY = 'cgptmp.tg.boundTargets';
 let boundTargets = {}; // paneId -> { chatId, threadId } : mirror this pane to a TG chat/topic
 const boundGen = new Map();
@@ -569,6 +574,16 @@ window.addEventListener('message', (e) => {
   // Mirror a bound pane's finished turn to its Telegram chat/topic.
   if (d.type === 'cgptmp:gen') {
     const { pane } = paneByContentWindow(e.source);
+    if (pane && aiFinishedBridge) {
+      void aiFinishedBridge.observePaneGeneration({
+        paneId: pane.id,
+        generating: d.generating,
+        convId: d.convId || null,
+        title: pane.title || d.title || 'ChatGPT',
+        url: pane.url || d.url || '',
+        focused: state.focusedId === pane.id
+      });
+    }
     if (pane && boundTargets[pane.id]) {
       const was = boundGen.get(pane.id);
       boundGen.set(pane.id, d.generating);
