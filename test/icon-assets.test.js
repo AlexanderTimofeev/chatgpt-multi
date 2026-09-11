@@ -28,18 +28,30 @@ function readPngInfo(filePath) {
   return { width, height, hasTransparency };
 }
 
-test('app page uses the SVG favicon so browser tabs stay crisp on HiDPI displays', () => {
-  const html = fs.readFileSync(path.join(root, 'app.html'), 'utf8');
-  assert.match(html, /<link\s+rel="icon"\s+type="image\/svg\+xml"\s+href="icons\/icon\.svg"\s*\/?>/);
+test('manifest wires the ChatGPT icon set for the toolbar and extension card', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+  for (const size of [16, 32, 48, 128]) {
+    const file = `icons/chatgpt-${size}.png`;
+    assert.equal(manifest.icons[size], file);
+    assert.equal(manifest.action.default_icon[size], file);
+    assert.ok(fs.statSync(path.join(root, file)).size > 0, `${file} must exist`);
+  }
 });
 
 test('extension PNG icons preserve transparent rounded corners at every declared size', () => {
   for (const size of [16, 32, 48, 128]) {
-    const info = readPngInfo(path.join(root, `icons/icon${size}.png`));
+    const info = readPngInfo(path.join(root, `icons/chatgpt-${size}.png`));
     assert.deepEqual(
       info,
       { width: size, height: size, hasTransparency: true },
-      `icon${size}.png must be ${size}x${size} and contain transparency`
+      `chatgpt-${size}.png must be ${size}x${size} and contain transparency`
     );
+  }
+});
+
+test('extension pages use the SVG favicon so browser tabs stay crisp on HiDPI displays', () => {
+  for (const page of ['app.html', 'options.html', 'sidepanel.html']) {
+    const html = fs.readFileSync(path.join(root, page), 'utf8');
+    assert.match(html, /<link\s+rel="icon"\s+type="image\/svg\+xml"\s+href="icons\/chatgpt-mark\.svg"\s*\/?>/, `${page} must link the SVG favicon`);
   }
 });
