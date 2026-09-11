@@ -14,7 +14,8 @@ test('workspace forwards cgptmp generation with resolved pane identity', () => {
 test('options loads bridge and exposes pairing control', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'options.html'), 'utf8');
   const source = fs.readFileSync(path.join(__dirname, '..', 'options.js'), 'utf8');
-  assert.match(html, /src\/lib\/ai-finished-bridge\.js/);
-  assert.match(html, /id="pairAiFinished"/);
-  assert.match(source, /pairingBridge\.pair\(\)/);
+  assert.match(html, /src="src\/lib\/ai-finished-bridge\.js"/);
+  assert.match(html, /src="options\.js"/);
+  assert.match(source, /button\.id = 'pairAiFinished'/);
+  assert.match(source, /await pairingBridge\.pair\(\)/);
 });
