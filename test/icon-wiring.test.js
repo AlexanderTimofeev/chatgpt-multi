@@ -8,7 +8,7 @@ test('manifest and extension pages use the GPT-Multi icon set', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
   const options = fs.readFileSync(path.join(__dirname, '..', 'options.html'), 'utf8');
 
-  assert.equal(manifest.version, '0.1.5');
+  assert.equal(manifest.version, '0.1.6');
   for (const size of ['16','32','48','128']) {
     assert.equal(manifest.icons[size], `icons/icon${size}.png`);
     assert.equal(manifest.action.default_icon[size], `icons/icon${size}.png`);
