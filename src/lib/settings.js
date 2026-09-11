@@ -56,6 +56,9 @@
     // between tool calls) at the cost of a small delay.
     genIdleConfirmMs: 1800,
 
+    // AI Finished extension bridge
+    aiFinishedExtensionId: '',
+
     // Telegram bridge
     tgEnabled: false,
     tgBotToken: '',
