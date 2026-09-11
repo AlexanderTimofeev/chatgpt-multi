@@ -54,6 +54,12 @@
       ],
     },
     {
+      title: 'AI Finished',
+      items: [
+        { key: 'aiFinishedExtensionId', type: 'text', name: 'AI Finished extension ID', desc: 'Скопируйте ID расширения AI Finished из chrome://extensions. После сохранения GPT-Multi выполнит привязку.' },
+      ],
+    },
+    {
       title: 'Детекция генерации',
       items: [
         { key: 'genIdleConfirmMs', type: 'number', name: 'Порог «ответ завершён», мс', desc: 'Сколько панель должна выглядеть простаивающей, прежде чем ход считается завершённым. Больше = надёжнее для кастомных GPT с инструментами (перекрывает паузы между вызовами), но с небольшой задержкой.', min: 600, max: 15000 },
@@ -100,6 +106,19 @@
     savedTimer = setTimeout(() => (savedEl.textContent = ''), 1200);
   }
   function persist() { chrome.storage.local.set({ [S.STORAGE_KEY]: settings }, flashSaved); }
+
+  const AI = window.CGPTMP && window.CGPTMP.aiFinishedBridge;
+  const pairingBridge = AI ? AI.createBridge({
+    getExtensionId: () => settings.aiFinishedExtensionId,
+    sendExternal: (id, message) => chrome.runtime.sendMessage(id, message)
+  }) : null;
+
+  async function pairAiFinished() {
+    const status = document.getElementById('aiFinishedStatus');
+    if (!pairingBridge) { if (status) status.textContent = 'Bridge unavailable'; return; }
+    const result = await pairingBridge.pair();
+    if (status) status.textContent = result?.ok ? 'Connected' : `Not connected: ${result?.error || 'unknown error'}`;
+  }
 
   function visible(item) { return !item.requires || !!settings[item.requires]; }
 
@@ -148,7 +167,7 @@
       input.type = item.key.toLowerCase().includes('token') ? 'password' : 'text';
       input.className = 'text-input';
       input.value = settings[item.key] || '';
-      input.addEventListener('change', () => { settings[item.key] = input.value.trim(); persist(); });
+      input.addEventListener('change', () => { settings[item.key] = input.value.trim(); persist(); if (item.key === 'aiFinishedExtensionId' && settings[item.key]) pairAiFinished(); });
       row.appendChild(input);
     } else if (item.type === 'select') {
       const sel = document.createElement('select');
@@ -176,6 +195,8 @@
     }
     return row;
   }
+
+  document.getElementById('pairAiFinished')?.addEventListener('click', () => pairAiFinished());
 
   chrome.storage.local.get([S.STORAGE_KEY], (res) => {
     settings = S.withDefaults(res && res[S.STORAGE_KEY]);
